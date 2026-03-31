@@ -2,7 +2,7 @@
   "expo": {
     "name": "Social Media Hub",
     "slug": "Element",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/ICON/social_media_hub_app_icon.jpg",
     "userInterfaceStyle": "light",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.sadat.element",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE"
       },

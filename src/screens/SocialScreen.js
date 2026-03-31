@@ -23,11 +23,19 @@ export default function SocialScreen({
   iconLib,
 }) {
   const webViewRef = useRef(null);
+  const loadingTimeoutRef = useRef(null);
   const isFocused = useIsFocused();
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [canGoBack, setCanGoBack] = useState(false);
+
+  const clearLoadingTimeout = () => {
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
+  };
 
   const onRefresh = () => {
     setHasError(false);
@@ -65,7 +73,18 @@ export default function SocialScreen({
   };
 
   const onShouldStartLoadWithRequest = (request) => {
-    return request.url.startsWith('http://') || request.url.startsWith('https://');
+    const { url } = request;
+    // Allow standard web protocols and about:blank
+    if (url.startsWith('http://') || url.startsWith('https://') || url === 'about:blank') {
+      return true;
+    }
+    
+    // Explicitly block deep links like intent://, snssdk1233:// (TikTok), twitter:// (X)
+    // This forces the platform to stay inside our WebView.
+    // We also make sure to clear the loading banner just in case this intent triggered onLoadStart.
+    setIsLoading(false);
+    clearLoadingTimeout();
+    return false;
   };
 
   // Notification scraper — only run when this tab is focused
@@ -87,12 +106,36 @@ export default function SocialScreen({
     })(); true;
   ` : 'true;';
 
-  // Inject CSS to hide download banners on load
+  // Inject CSS to hide download banners on load & Hijack window.open for Auth popups
   const initJS = `
     (function() {
+      // Force mobile-friendly scaling even on Desktop UAs (fixes tiny TikTok layout)
+      let meta = document.querySelector('meta[name="viewport"]');
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.name = 'viewport';
+        document.head.appendChild(meta);
+      }
+      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+
+      // Hide banners
       const s = document.createElement('style');
       s.innerHTML = '.tiktok-app-banner,.app-banner,.download-banner,[class*="AppBanner"],[class*="SmartBanner"]{display:none!important}';
       document.head.appendChild(s);
+
+      // Force popups to open in exactly this window (Critical for Google/FB Auth)
+      window.open = function(url, windowName, windowFeatures) {
+        window.location.href = url;
+        return window;
+      };
+
+      // Force target="_blank" links to open in this window
+      document.addEventListener('click', function(e) {
+        const a = e.target.closest('a');
+        if (a && a.getAttribute('target') === '_blank') {
+          a.removeAttribute('target');
+        }
+      }, true);
     })(); true;
   `;
 
@@ -117,6 +160,7 @@ export default function SocialScreen({
         ref={webViewRef}
         key={refreshKey}
         source={{ uri: url }}
+        originWhitelist={['*']}
         style={styles.webview}
         // Performance & Rendering
         androidLayerType="hardware"
@@ -137,9 +181,24 @@ export default function SocialScreen({
         injectedJavaScript={initJS}
         injectedJavaScriptBeforeContentLoaded={initJS}
         // Events
-        onLoadStart={() => { setIsLoading(true); setHasError(false); }}
-        onLoadEnd={() => setIsLoading(false)}
-        onError={() => { setHasError(true); setIsLoading(false); }}
+        onLoadStart={() => { 
+          setIsLoading(true); 
+          setHasError(false); 
+          clearLoadingTimeout();
+          // Timeout failsafe to clear "Opening X" banners if WebView hangs on intents
+          loadingTimeoutRef.current = setTimeout(() => {
+            setIsLoading(false);
+          }, 12000); // 12-second max loading banner
+        }}
+        onLoadEnd={() => {
+          setIsLoading(false);
+          clearLoadingTimeout();
+        }}
+        onError={() => { 
+          setHasError(true); 
+          setIsLoading(false); 
+          clearLoadingTimeout();
+        }}
         onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
         onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
         onMessage={handleMessage}

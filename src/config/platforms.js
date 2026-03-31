@@ -1,6 +1,3 @@
-// Mobile Android Chrome UA — works best for most social platforms
-const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
-
 // Desktop UA — required for WhatsApp Web to work properly
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -12,7 +9,6 @@ const PLATFORMS = [
     color: '#1877F2',
     iconLib: 'FontAwesome5',
     iconName: 'facebook',
-    customUserAgent: ANDROID_UA,
   },
   {
     key: 'instagram',
@@ -21,7 +17,6 @@ const PLATFORMS = [
     color: '#E1306C',
     iconLib: 'MaterialCommunityIcons',
     iconName: 'instagram',
-    customUserAgent: ANDROID_UA,
   },
   {
     key: 'youtube',
@@ -30,7 +25,6 @@ const PLATFORMS = [
     color: '#FF0000',
     iconLib: 'MaterialCommunityIcons',
     iconName: 'youtube',
-    customUserAgent: ANDROID_UA,
   },
   {
     key: 'tiktok',
@@ -39,7 +33,7 @@ const PLATFORMS = [
     color: '#EE1D52',
     iconLib: 'MaterialCommunityIcons',
     iconName: 'music-note',
-    customUserAgent: ANDROID_UA,
+    customUserAgent: DESKTOP_UA,
   },
   {
     key: 'x',
@@ -48,7 +42,6 @@ const PLATFORMS = [
     color: '#000000',
     iconLib: 'MaterialCommunityIcons',
     iconName: 'twitter',
-    customUserAgent: ANDROID_UA,
   },
   {
     key: 'whatsapp',
@@ -57,7 +50,6 @@ const PLATFORMS = [
     color: '#25D366',
     iconLib: 'MaterialCommunityIcons',
     iconName: 'whatsapp',
-    // WhatsApp Web requires desktop UA to show the proper interface
     customUserAgent: DESKTOP_UA,
   },
 ];

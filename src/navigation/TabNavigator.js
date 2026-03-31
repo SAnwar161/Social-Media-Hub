@@ -1,38 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { 
-  View, 
-  TouchableOpacity, 
-  StyleSheet, 
-  ScrollView, 
-  Text, 
-  Dimensions,
-  DeviceEventEmitter
+import {
+  View,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Text,
+  DeviceEventEmitter,
+  Alert,
 } from 'react-native';
-import { MaterialCommunityIcons, FontAwesome5, Ionicons } from '@expo/vector-icons';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import PLATFORMS from '../config/platforms';
 import SocialScreen from '../screens/SocialScreen';
+import { HOME_PLATFORM_KEY } from '../screens/OnboardingScreen';
 
-const { width } = Dimensions.get('window');
 const Tab = createBottomTabNavigator();
 
-const CustomTabBar = ({ state, descriptors, navigation }) => {
+// ─── Custom Tab Bar ───────────────────────────────────────────────────────────
+const CustomTabBar = ({ state, descriptors, navigation, badges, onChangeHome, homePlatform }) => {
   return (
     <View style={styles.tabBarContainer}>
-      <ScrollView 
-        horizontal 
+      <ScrollView
+        horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         decelerationRate="fast"
-        snapToAlignment="center"
-        scrollEventThrottle={16}
+        scrollEventThrottle={32}
       >
         {state.routes.map((route, index) => {
-          const { options } = descriptors[route.key];
           const isFocused = state.index === index;
           const platform = PLATFORMS.find(p => p.key === route.name);
-          const brandColor = platform ? platform.color : '#007AFF';
+          if (!platform) return null;
+
+          const isHome = platform.key === homePlatform;
+          const IconComponent = platform.iconLib === 'FontAwesome5' ? FontAwesome5 : MaterialCommunityIcons;
 
           const onPress = () => {
             const event = navigation.emit({
@@ -40,41 +43,59 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
               target: route.key,
               canPreventDefault: true,
             });
-
             if (!isFocused && !event.defaultPrevented) {
               navigation.navigate(route.name);
             }
           };
 
-          let IconComponent = MaterialCommunityIcons;
-          if (platform?.iconLib === 'FontAwesome5') IconComponent = FontAwesome5;
-          if (platform?.iconLib === 'Ionicons') IconComponent = Ionicons;
-
-          const iconSize = isFocused ? 44 : 38;
+          const onLongPress = () => {
+            Alert.alert(
+              `Set ${platform.label} as Home`,
+              `${platform.label} will load instantly when you open the app.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: '⭐ Set as Home',
+                  onPress: () => onChangeHome(platform.key),
+                },
+              ]
+            );
+          };
 
           return (
             <TouchableOpacity
               key={route.name}
               onPress={onPress}
+              onLongPress={onLongPress}
               style={styles.tabItem}
-              activeOpacity={0.7}
+              activeOpacity={0.75}
             >
               <View style={[
                 styles.iconWrapper,
-                isFocused && { transform: [{ scale: 1.15 }] }
+                isFocused && styles.iconWrapperActive,
+                isFocused && { backgroundColor: platform.color + '18' },
               ]}>
-                <IconComponent 
-                  name={platform?.iconName || 'apps'} 
-                  size={iconSize} 
-                  color={brandColor} 
+                <IconComponent
+                  name={platform.iconName}
+                  size={isFocused ? 30 : 26}
+                  color={isFocused ? platform.color : '#aaa'}
                 />
-                
-                {options.tabBarBadge && (
+                {/* Notification badge */}
+                {badges[platform.key] && (
                   <View style={styles.badge} />
                 )}
+                {/* Home star indicator */}
+                {isHome && (
+                  <View style={[styles.homeStar, { backgroundColor: platform.color }]}>
+                    <MaterialCommunityIcons name="star" size={8} color="#fff" />
+                  </View>
+                )}
               </View>
+              <Text style={[styles.tabLabel, isFocused && { color: platform.color, fontWeight: '700' }]}>
+                {platform.label}
+              </Text>
               {isFocused && (
-                <View style={[styles.activeIndicator, { backgroundColor: brandColor }]} />
+                <View style={[styles.activeIndicator, { backgroundColor: platform.color }]} />
               )}
             </TouchableOpacity>
           );
@@ -84,30 +105,47 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
   );
 };
 
-export default function TabNavigator() {
+// ─── Main Navigator ───────────────────────────────────────────────────────────
+export default function TabNavigator({ initialPlatform }) {
   const [badges, setBadges] = useState({});
+  const [homePlatform, setHomePlatform] = useState(initialPlatform || PLATFORMS[0].key);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('PLATFORM_BADGE_UPDATE', ({ platformKey, count }) => {
-      setBadges(prev => ({ ...prev, [platformKey]: count > 0 }));
-    });
+    const sub = DeviceEventEmitter.addListener(
+      'PLATFORM_BADGE_UPDATE',
+      ({ platformKey, count }) => {
+        setBadges(prev => ({ ...prev, [platformKey]: count > 0 }));
+      }
+    );
     return () => sub.remove();
   }, []);
 
+  const handleChangeHome = async (newKey) => {
+    try {
+      await AsyncStorage.setItem(HOME_PLATFORM_KEY, newKey);
+      setHomePlatform(newKey);
+      Alert.alert('✅ Home updated!', `${PLATFORMS.find(p => p.key === newKey)?.label} will load first next time you open the app.`);
+    } catch (e) {}
+  };
+
   return (
     <Tab.Navigator
-      tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{
-        headerShown: false,
-      }}
+      initialRouteName={homePlatform}
+      // lazy=true (default) — tabs only mount when first visited
+      screenOptions={{ headerShown: false, lazy: true }}
+      tabBar={(props) => (
+        <CustomTabBar
+          {...props}
+          badges={badges}
+          onChangeHome={handleChangeHome}
+          homePlatform={homePlatform}
+        />
+      )}
     >
       {PLATFORMS.map((platform) => (
         <Tab.Screen
           key={platform.key}
           name={platform.key}
-          options={{
-            tabBarBadge: badges[platform.key] || false,
-          }}
         >
           {() => (
             <SocialScreen
@@ -116,6 +154,8 @@ export default function TabNavigator() {
               label={platform.label}
               platformKey={platform.key}
               customUserAgent={platform.customUserAgent}
+              iconName={platform.iconName}
+              iconLib={platform.iconLib}
             />
           )}
         </Tab.Screen>
@@ -124,49 +164,74 @@ export default function TabNavigator() {
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   tabBarContainer: {
-    height: 85,
+    height: 72,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
-    elevation: 8,
+    elevation: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
   },
   scrollContent: {
-    paddingHorizontal: 15,
+    paddingHorizontal: 8,
     alignItems: 'center',
   },
   tabItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    minWidth: 85,
+    paddingHorizontal: 12,
+    minWidth: 72,
     height: '100%',
   },
   iconWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
+    width: 48,
+    height: 42,
+    borderRadius: 12,
+    position: 'relative',
+  },
+  iconWrapperActive: {
+    borderRadius: 12,
+  },
+  tabLabel: {
+    fontSize: 10,
+    color: '#aaa',
+    marginTop: 3,
+    fontWeight: '500',
   },
   badge: {
     position: 'absolute',
-    top: -2,
-    right: -2,
-    minWidth: 12,
-    height: 12,
-    borderRadius: 6,
+    top: 2,
+    right: 2,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
     backgroundColor: '#FF3B30',
-    borderWidth: 2,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  homeStar: {
+    position: 'absolute',
+    bottom: 1,
+    right: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
     borderColor: '#fff',
   },
   activeIndicator: {
-    position: 'absolute',
-    bottom: 8,
-    width: 28,
-    height: 4,
+    width: 20,
+    height: 3,
     borderRadius: 2,
+    marginTop: 2,
   },
 });

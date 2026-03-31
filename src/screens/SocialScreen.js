@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -11,14 +11,16 @@ import {
 } from 'react-native';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { WebView } from 'react-native-webview';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 
-export default function SocialScreen({ 
-  url, 
-  themeColor, 
-  label, 
-  platformKey, 
-  customUserAgent, 
+export default function SocialScreen({
+  url,
+  themeColor,
+  label,
+  platformKey,
+  customUserAgent,
+  iconName,
+  iconLib,
 }) {
   const webViewRef = useRef(null);
   const isFocused = useIsFocused();
@@ -26,56 +28,14 @@ export default function SocialScreen({
   const [hasError, setHasError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [canGoBack, setCanGoBack] = useState(false);
-  const loadingTimeoutRef = useRef(null);
-  const scraperIntervalRef = useRef(null);
-
-  const clearLoadingTimeout = () => {
-    if (loadingTimeoutRef.current) {
-      clearTimeout(loadingTimeoutRef.current);
-      loadingTimeoutRef.current = null;
-    }
-  };
-
-  const clearScraper = () => {
-    if (scraperIntervalRef.current) {
-      clearInterval(scraperIntervalRef.current);
-      scraperIntervalRef.current = null;
-    }
-  };
-
-  const startScraper = () => {
-    clearScraper();
-    
-    // Scraper logic: 15s if focused, 90s if background (Power Save)
-    const interval = isFocused ? 15000 : 90000;
-    
-    scraperIntervalRef.current = setInterval(() => {
-      if (webViewRef.current) {
-        webViewRef.current.injectJavaScript(getScraperJS());
-      }
-    }, interval);
-  };
-
-  // Re-start scraper whenever focus changes
-  useEffect(() => {
-    startScraper();
-    return () => clearScraper();
-  }, [isFocused]);
-
-  // FINAL HARDENING: Component Unmount Cleanup
-  useEffect(() => {
-    return () => {
-      clearLoadingTimeout();
-      clearScraper();
-    };
-  }, []);
 
   const onRefresh = () => {
-    clearLoadingTimeout();
-    clearScraper();
+    setHasError(false);
+    setIsLoading(true);
     setRefreshKey(prev => prev + 1);
   };
 
+  // Back button support (Android)
   useFocusEffect(
     useCallback(() => {
       const onBackPress = () => {
@@ -86,8 +46,8 @@ export default function SocialScreen({
         return false;
       };
       if (Platform.OS === 'android') {
-        const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-        return () => subscription.remove();
+        const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+        return () => sub.remove();
       }
     }, [canGoBack])
   );
@@ -96,65 +56,60 @@ export default function SocialScreen({
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'NOTIFICATION_STATUS') {
-        DeviceEventEmitter.emit('PLATFORM_BADGE_UPDATE', { platformKey, count: data.hasNotifications ? 1 : 0 });
-      } else if (data.type === 'CONSOLE_LOG') {
-        // Reduced logging for performance
-        if (data.level === 'error') console.log(`[WebView ${label}] Error: ${data.message}`);
+        DeviceEventEmitter.emit('PLATFORM_BADGE_UPDATE', {
+          platformKey,
+          count: data.hasNotifications ? 1 : 0,
+        });
       }
     } catch (e) {}
   };
 
   const onShouldStartLoadWithRequest = (request) => {
-    if (request.url.startsWith('http://') || request.url.startsWith('https://')) return true;
-    console.log(`[SocialScreen ${label}] Blocked deep-link: ${request.url}`);
-    return false;
+    return request.url.startsWith('http://') || request.url.startsWith('https://');
   };
 
-  const isX = platformKey === 'x' || label === 'X';
+  // Notification scraper — only run when this tab is focused
+  const scraperJS = isFocused ? `
+    (function() {
+      try {
+        const title = document.title;
+        let hasNotifs = !!title.match(/\\((\\d+)\\)/);
+        if (!hasNotifs) {
+          const host = window.location.host;
+          if (host.includes('whatsapp')) hasNotifs = !!document.querySelector('[data-icon="unread-count"]');
+          else if (host.includes('facebook')) hasNotifs = !!document.querySelector('[aria-label*="notification" i]');
+          else if (host.includes('tiktok')) hasNotifs = !!document.querySelector('[data-e2e="notification-badge"]');
+          else if (host.includes('twitter') || host.includes('x.com')) hasNotifs = !!document.querySelector('[data-testid*="Notification"] [class*="Dot"]');
+          else if (host.includes('instagram')) hasNotifs = !!document.querySelector('a[href*="direct/inbox"] div[class*="Dot"]');
+        }
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'NOTIFICATION_STATUS', hasNotifications: hasNotifs }));
+      } catch(e) {}
+    })(); true;
+  ` : 'true;';
 
-  if (hasError && !isX) { 
+  // Inject CSS to hide download banners on load
+  const initJS = `
+    (function() {
+      const s = document.createElement('style');
+      s.innerHTML = '.tiktok-app-banner,.app-banner,.download-banner,[class*="AppBanner"],[class*="SmartBanner"]{display:none!important}';
+      document.head.appendChild(s);
+    })(); true;
+  `;
+
+  const IconComponent = iconLib === 'FontAwesome5' ? FontAwesome5 : MaterialCommunityIcons;
+
+  if (hasError) {
     return (
       <View style={styles.errorContainer}>
-        <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#ff3b30" />
-        <Text style={styles.errorText}>Could not load {label}</Text>
-        <TouchableOpacity style={[styles.refreshButton, { backgroundColor: themeColor }]} onPress={onRefresh}>
-          <Text style={styles.refreshButtonText}>Try Again</Text>
+        <IconComponent name={iconName || 'alert-circle-outline'} size={52} color={themeColor} />
+        <Text style={styles.errorTitle}>Could not load {label}</Text>
+        <Text style={styles.errorSub}>Check your internet connection and try again.</Text>
+        <TouchableOpacity style={[styles.retryBtn, { backgroundColor: themeColor }]} onPress={onRefresh}>
+          <Text style={styles.retryText}>Try Again</Text>
         </TouchableOpacity>
       </View>
     );
   }
-
-  const getScraperJS = () => `
-    (function() {
-      try {
-        const host = window.location.host;
-        const title = document.title;
-        let hasNotifs = false;
-        if (title.match(/\\((\\d+)\\)/)) hasNotifs = true;
-        if (!hasNotifs) {
-          if (host.includes('whatsapp')) hasNotifs = !!document.querySelector('[data-icon="unread-count"], .unread-count');
-          else if (host.includes('facebook')) hasNotifs = !!document.querySelector('a[href*="/notifications"] span[class*="count"]');
-          else if (host.includes('tiktok')) hasNotifs = !!document.querySelector('span[data-e2e="nav-badge-count"], [data-e2e="notification-badge"]');
-          else if (host.includes('x.com') || host.includes('twitter')) hasNotifs = !!document.querySelector('[data-testid*="Notifications"] [class*="Dot"], [aria-label*="unread" i]');
-          else if (host.includes('instagram')) hasNotifs = !!document.querySelector('a[href*="direct/inbox"] div[class*="Dot"]');
-        }
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'NOTIFICATION_STATUS', hasNotifications: hasNotifs }));
-      } catch (e) {}
-    })();
-  `;
-
-  // One-time initialization JS (CSS & Console)
-  const initJS = `
-    (function() {
-      const style = document.createElement('style');
-      style.innerHTML = \`.tiktok-app-banner, .app-banner, .download-banner { display: none !important; }\`;
-      document.head.appendChild(style);
-      
-      const pipe = (l, m) => window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CONSOLE_LOG', level: l, message: m }));
-      console.error = (...a) => pipe('error', a.join(' '));
-    })();
-    true;
-  `;
 
   return (
     <View style={styles.container}>
@@ -163,71 +118,47 @@ export default function SocialScreen({
         key={refreshKey}
         source={{ uri: url }}
         style={styles.webview}
-        onLoadStart={() => {
-          setIsLoading(true);
-          setHasError(false);
-          clearLoadingTimeout();
-          
-          const timeoutDuration = isX ? 90000 : 45000;
-          
-          loadingTimeoutRef.current = setTimeout(() => {
-            // Only show error if still loading after timeout
-            if (isLoading) {
-              setIsLoading(false);
-              setHasError(true);
-              console.log(`[SocialScreen ${label}] Loading Timeout Reached (${timeoutDuration}ms)`);
-            }
-          }, timeoutDuration);
-        }}
-        onLoadEnd={() => {
-          setIsLoading(false);
-          clearLoadingTimeout();
-        }}
-        onError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          // Silent logging for non-fatal errors (often blocked trackers/ads)
-          console.log(`[WebView ${label}] Non-fatal Error: ${nativeEvent.description} (${nativeEvent.code})`);
-          
-          // Trigger error UI for critical navigation failures (net errors -1 to -15)
-          if (nativeEvent.code <= -1 && nativeEvent.code >= -15) {
-             setHasError(true);
-             setIsLoading(false);
-             clearLoadingTimeout();
-          }
-        }}
-        domStorageEnabled={true}
-        databaseEnabled={true}
-        javaScriptEnabled={true}
+        // Performance & Rendering
+        androidLayerType="hardware"
         cacheEnabled={true}
+        domStorageEnabled={true}
+        javaScriptEnabled={true}
         sharedCookiesEnabled={true}
         thirdPartyCookiesEnabled={true}
+        // Media
+        allowsInlineMediaPlayback={true}
+        mediaPlaybackRequiresUserAction={false}
+        // Features
+        setSupportMultipleWindows={false}
+        javaScriptCanOpenWindowsAutomatically={false}
+        // Identity
+        userAgent={customUserAgent || undefined}
+        // Injected scripts
+        injectedJavaScript={initJS}
+        injectedJavaScriptBeforeContentLoaded={initJS}
+        // Events
+        onLoadStart={() => { setIsLoading(true); setHasError(false); }}
+        onLoadEnd={() => setIsLoading(false)}
+        onError={() => { setHasError(true); setIsLoading(false); }}
         onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
         onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
         onMessage={handleMessage}
-        onHttpError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.log(`[WebView ${label}] HTTP Error: ${nativeEvent.statusCode} at ${nativeEvent.url}`);
+        onRenderProcessGone={() => setRefreshKey(prev => prev + 1)}
+        onContentProcessDidTerminate={() => setRefreshKey(prev => prev + 1)}
+        onHttpError={(e) => {
+          // Silently ignore 4xx/5xx that aren't fatal page loads
         }}
-        onRenderProcessGone={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.log(`[WebView ${label}] Render Process Gone! Detail: ${nativeEvent.didCrash ? 'Crashed' : 'Killed'}`);
-          setRefreshKey(prev => prev + 1); // Auto-recovery for crashes
-        }}
-        onContentProcessDidTerminate={() => {
-          console.log(`[WebView ${label}] Content Process Terminated (OOM?)`);
-          setRefreshKey(prev => prev + 1); // Auto-recovery
-        }}
-        injectedJavaScript={initJS}
-        userAgent={customUserAgent || undefined}
-        setSupportMultipleWindows={true}
-        javaScriptCanOpenWindowsAutomatically={true}
-        allowsInlineMediaPlayback={true}
-        mediaPlaybackRequiresUserAction={false}
-        androidLayerType="hardware"
       />
+
+      {/* Branded Loading Splash */}
       {isLoading && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={themeColor} />
+        <View style={[styles.loadingOverlay, { backgroundColor: themeColor + '15' }]}>
+          <View style={[styles.loaderCard, { borderColor: themeColor + '40' }]}>
+            <IconComponent name={iconName || 'web'} size={56} color={themeColor} />
+            <Text style={[styles.loadingLabel, { color: themeColor }]}>{label}</Text>
+            <ActivityIndicator size="small" color={themeColor} style={styles.spinner} />
+            <Text style={styles.loadingHint}>Opening {label}…</Text>
+          </View>
         </View>
       )}
     </View>
@@ -237,14 +168,50 @@ export default function SocialScreen({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   webview: { flex: 1 },
+
+  // Branded loading overlay
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.9)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  errorText: { fontSize: 16, color: '#333', marginVertical: 15, fontWeight: '500' },
-  refreshButton: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
-  refreshButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  loaderCard: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    borderWidth: 1.5,
+    paddingVertical: 36,
+    paddingHorizontal: 48,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  loadingLabel: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 14,
+    letterSpacing: 0.3,
+  },
+  spinner: { marginTop: 16 },
+  loadingHint: { fontSize: 12, color: '#bbb', marginTop: 8 },
+
+  // Error screen
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    backgroundColor: '#fafafa',
+  },
+  errorTitle: { fontSize: 18, fontWeight: '700', color: '#222', marginTop: 16 },
+  errorSub: { fontSize: 13, color: '#888', marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  retryBtn: {
+    marginTop: 24,
+    paddingHorizontal: 32,
+    paddingVertical: 13,
+    borderRadius: 12,
+  },
+  retryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });
